@@ -1,186 +1,173 @@
-} catch (err) {
+// ===== 1. API KEY (Safe: browser లో మాత్రమే) =====
+let API_KEY = localStorage.getItem('jarvis_key');
+if(!API_KEY){
+    API_KEY = prompt('Enter your Gemini API Key:');
+    if(API_KEY) localStorage.setItem('jarvis_key', API_KEY);
+}
 
-        const messages = chat.querySelectorAll(".msg.ai");
+// ===== 2. SMART MODELS =====
+const MODELS = ["gemini-3.6-flash", "gemini-flash-latest"];
+const chat = document.getElementById('chat');
+const input = document.getElementById('msg');
+const micBtn = document.getElementById('mic-btn');
 
-        if (messages.length > 0) {
-            const lastMessage = messages[messages.length - 1];
-
-            if (lastMessage.innerText === "J.A.R.V.I.S: Thinking...") {
-                lastMessage.remove();
+// ===== 3. GEMINI BRAIN =====
+async function callGemini(p){
+    let lastErr;
+    for(const m of MODELS){
+        try{
+            const res = await fetch(
+                "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent?key=" + API_KEY,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [{
+                                text: "You are J.A.R.V.I.S., a friendly, motivational and inspirational AI assistant. " +
+                                      "Speak naturally, warmly and confidently. " +
+                                      "Keep your answers clear and easy to understand. " +
+                                      "Encourage the user when appropriate. " +
+                                      "Do not sound robotic or overly formal.\n\n" + p
+                            }]
+                        }]
+                    })
+                }
+            );
+            const data = await res.json();
+            if(data.error){
+                lastErr = new Error(data.error.message);
+                if(/high demand|temporar|quota|rate|unavailable|no longer available|deprecated/i.test(data.error.message)){
+                    continue;
+                }
+                throw lastErr;
             }
+            return data.candidates[0].content.parts[0].text;
+        } catch(e) {
+            lastErr = e;
         }
+    }
+    throw lastErr;
+}
 
-        add(
-            "J.A.R.V.I.S ERROR: " + (err.message || err),
-            "ai"
-        );
+async function askGemini(p){
+    add('J.A.R.V.I.S: Thinking...', 'ai');
+    try {
+        const reply = await callGemini(p);
+        chat.lastChild.innerText = 'J.A.R.V.I.S: ' + reply;
+        speak(reply);
+    } catch(e) {
+        chat.lastChild.innerText = 'J.A.R.V.I.S: ERROR - ' + e.message;
     }
 }
 
-
-// ===== 6. SPEECH RECOGNITION =====
-const SR =
-    window.SpeechRecognition ||
-    window.webkitSpeechRecognition;
-
-let rec = null;
-
-if (SR) {
-
-    rec = new SR();
-
-    rec.lang = "en-US";
+// ===== 4. SPEECH RECOGNITION =====
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if(SR){
+    const rec = new SR();
+    rec.lang = 'en-US';
     rec.continuous = false;
     rec.interimResults = false;
-
+    
     rec.onresult = (e) => {
-
         const t = e.results[0][0].transcript;
-
-        add("YOU: " + t, "user");
-
+        add('YOU: ' + t, 'user');
         askGemini(t);
     };
-
-    rec.onerror = (e) => {
-        add(
-            "J.A.R.V.I.S: Microphone error - " + e.error,
-            "ai"
-        );
-    };
-
-    rec.onend = () => {
-
-        if (micBtn) {
-            micBtn.innerText = "🎤";
+    
+    micBtn.onclick = () => {
+        try {
+            speechSynthesis.cancel();
+            rec.start();
+            micBtn.innerText = 'LISTENING...';
+        } catch(e) {
+            console.log(e);
         }
     };
-
-    if (micBtn) {
-
-        micBtn.onclick = () => {
-
-            try {
-
-                rec.start();
-
-                micBtn.innerText = "LISTENING...";
-
-            } catch (err) {
-
-                // Prevent "recognition has already started" error
-                console.log(err);
-            }
-        };
-    }
-
+    
+    rec.onend = () => {
+        micBtn.innerText = '🎙️';
+    };
 } else {
-
-    if (micBtn) {
-
-        micBtn.onclick = () => {
-            add(
-                "J.A.R.V.I.S: Speech Recognition is not supported in this browser.",
-                "ai"
-            );
-        };
-    }
+    micBtn.onclick = () => {
+        alert('Speech Recognition is not supported in this browser.');
+    };
 }
 
-
-// ===== 7. TEXT-TO-SPEECH =====
+// ===== 5. UPGRADED INSPIRATIONAL TEXT-TO-SPEECH =====
 let voices = [];
-
-function loadVoices() {
+function loadVoices(){
     voices = speechSynthesis.getVoices();
 }
-
 loadVoices();
-
 speechSynthesis.onvoiceschanged = loadVoices;
 
+function getBestVoice(){
+    // Prioritizing warm, confident British Male voices (Classic JARVIS), 
+    // followed by highly expressive US voices.
+    const preferredNames = [
+        'Google UK English Male',   // Chrome OS/Android warm British
+        'Daniel',                   // macOS classic British male
+        'Microsoft George',         // Windows British male
+        'Google US English',        // Chrome fallback
+        'Microsoft Jenny',          // Very natural/expressive Windows female
+        'Samantha',                 // macOS standard smooth
+        'Alex'                      // macOS deep expressive male
+    ];
 
-function speak(t) {
-
-    if (!("speechSynthesis" in window)) {
-        return;
+    for(const name of preferredNames){
+        const found = voices.find(v => 
+            v.name.toLowerCase().includes(name.toLowerCase()) && 
+            v.lang.toLowerCase().startsWith('en')
+        );
+        if(found) return found;
     }
 
-    // Cancel previous speech
-    speechSynthesis.cancel();
+    // Fallback to any available English voice if the exact matches aren't found
+    return voices.find(v => v.lang.toLowerCase().startsWith('en-gb')) || 
+           voices.find(v => v.lang.toLowerCase().startsWith('en-us')) || 
+           voices.find(v => v.lang.toLowerCase().startsWith('en'));
+}
 
-    const u = new SpeechSynthesisUtterance(t);
+function speak(text){
+    speechSynthesis.cancel(); 
+    
+    // Clean text to prevent the AI from trying to pronounce markdown symbols like asterisks
+    const cleanText = text.replace(/[*#_]/g, '');
+    
+    const u = new SpeechSynthesisUtterance(cleanText);
 
-    u.rate = 1.05;
-    u.pitch = 0.85;
+    // ===== MOTIVATIONAL J.A.R.V.I.S. SETTINGS =====
+    // Slower rate = sounds more thoughtful, dramatic, and inspiring
+    u.rate = 0.88; 
+    
+    // Slightly lower pitch = sounds more confident, calm, and grounded
+    u.pitch = 0.92; 
+    
+    u.volume = 1.0; 
 
-    const v = voices.find(
-        voice => voice.lang &&
-        voice.lang.startsWith("en")
-    );
-
-    if (v) {
-        u.voice = v;
+    const voice = getBestVoice();
+    if(voice) {
+        u.voice = voice;
     }
 
     speechSynthesis.speak(u);
 }
 
+// ===== 6. TEXT SEND BUTTON =====
+document.getElementById('send').onclick = () => {
+    const t = input.value.trim();
+    if(!t) return;
+    add('YOU: ' + t, 'user');
+    input.value = '';
+    askGemini(t);
+};
 
-// ===== 8. TEXT SEND BUTTON =====
-const sendBtn = document.getElementById("send");
-
-if (sendBtn) {
-
-    sendBtn.onclick = () => {
-
-        const t = input.value.trim();
-
-        if (!t) {
-            return;
-        }
-
-        add("YOU: " + t, "user");
-
-        input.value = "";
-
-        askGemini(t);
-    };
-}
-
-
-// ===== 9. ENTER KEY SEND =====
-if (input) {
-
-    input.addEventListener("keydown", (e) => {
-
-        if (e.key === "Enter" && !e.shiftKey) {
-
-            e.preventDefault();
-
-            if (sendBtn) {
-                sendBtn.click();
-            }
-        }
-    });
-}
-
-
-// ===== 10. ADD MESSAGE TO CHAT =====
-function add(t, w) {
-
-    if (!chat) {
-        console.error("Chat element not found.");
-        return;
-    }
-
-    const d = document.createElement("div");
-
-    d.className = "msg " + w;
-
+// ===== 7. ADD MESSAGE =====
+function add(t, w){
+    const d = document.createElement('div');
+    d.className = 'msg ' + w;
     d.innerText = t;
-
     chat.appendChild(d);
-
     chat.scrollTop = chat.scrollHeight;
-          }
+}
